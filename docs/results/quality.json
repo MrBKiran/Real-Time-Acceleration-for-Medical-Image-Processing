@@ -1,0 +1,86 @@
+{
+ "none": {
+  "cnr": {
+   "anechoic cyst": 2.1747805078824363,
+   "hypoechoic": 1.3540111084779103,
+   "hyperechoic": 1.0284768243630726
+  },
+  "gcnr": {
+   "anechoic cyst": 0.8742760058758248,
+   "hypoechoic": 0.7022190971300065,
+   "hyperechoic": 0.5705129481853934
+  },
+  "bg_mean_over_std": 5.263433655103047,
+  "cyst_edge_gradient": 0.14761441946029663
+ },
+ "median": {
+  "cnr": {
+   "anechoic cyst": 3.5457590421040854,
+   "hypoechoic": 2.5049541195233664,
+   "hyperechoic": 1.9241224428017933
+  },
+  "gcnr": {
+   "anechoic cyst": 0.9555423020483476,
+   "hypoechoic": 0.9218336554317202,
+   "hyperechoic": 0.8351178415959567
+  },
+  "bg_mean_over_std": 10.097368876139322,
+  "cyst_edge_gradient": 0.11891892924904823
+ },
+ "wiener": {
+  "cnr": {
+   "anechoic cyst": 3.7386552691459656,
+   "hypoechoic": 3.0863088766733804,
+   "hyperechoic": 2.438990612824758
+  },
+  "gcnr": {
+   "anechoic cyst": 0.9477256103109649,
+   "hypoechoic": 0.9447976491234281,
+   "hyperechoic": 0.9298154741238372
+  },
+  "bg_mean_over_std": 12.196576833724976,
+  "cyst_edge_gradient": 0.11017267095545928
+ },
+ "bilateral": {
+  "cnr": {
+   "anechoic cyst": 2.854544440905253,
+   "hypoechoic": 1.9097697138786316,
+   "hyperechoic": 1.4129533370335896
+  },
+  "gcnr": {
+   "anechoic cyst": 0.9155700527084275,
+   "hypoechoic": 0.867108018348354,
+   "hyperechoic": 0.7739458645500042
+  },
+  "bg_mean_over_std": 7.282238523165385,
+  "cyst_edge_gradient": 0.13306545093655586
+ },
+ "median+bilateral": {
+  "cnr": {
+   "anechoic cyst": 4.195566157499949,
+   "hypoechoic": 3.40547513961792,
+   "hyperechoic": 2.708316127459208
+  },
+  "gcnr": {
+   "anechoic cyst": 0.9703036496134373,
+   "hypoechoic": 0.9697234918049449,
+   "hyperechoic": 0.9514048956622946
+  },
+  "bg_mean_over_std": 14.357525110244751,
+  "cyst_edge_gradient": 0.11533824168145657
+ },
+ "median+bilateral+clahe": {
+  "cnr": {
+   "anechoic cyst": 3.240744630495707,
+   "hypoechoic": 3.1466158827145896,
+   "hyperechoic": 2.5779950817426047
+  },
+  "gcnr": {
+   "anechoic cyst": 0.9597555997077617,
+   "hypoechoic": 0.9745438306216004,
+   "hyperechoic": 0.9399760695046292
+  },
+  "bg_mean_over_std": 5.598643819491069,
+  "cyst_edge_gradient": 0.13848168278733888
+ }
+}

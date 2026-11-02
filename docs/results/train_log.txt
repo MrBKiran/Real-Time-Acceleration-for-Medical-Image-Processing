@@ -1,0 +1,2 @@
+TinyUNet params: 121,033  device=cpu  train=1200 val=150
+epoch 1/8 loss 1.5071 val dice 0.255 iou 0.184 (99s)

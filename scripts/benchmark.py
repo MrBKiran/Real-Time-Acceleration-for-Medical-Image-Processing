@@ -72,7 +72,8 @@ for name, tf, cf in (("median3", lambda: F.median_t(img_t, 3), lambda: F.median_
                      ("bilateral5", lambda: F.bilateral_t(img_t, 5), lambda: F.bilateral_cpu(img_n, 5))):
     enh[name] = dict(torch=bench(tf), cpu_ref=bench(cf))
 enh["clahe_cpu"] = bench(lambda: F.clahe_cpu(img_n))
-enh["chain_median_bilateral_clahe"] = bench(lambda: F.Enhancer()(img_t))
+enh["chain_median_bilateral"] = bench(lambda: F.Enhancer()(img_t))
+enh["chain_median_bilateral_clahe"] = bench(lambda: F.Enhancer(["median", "bilateral", "clahe"])(img_t))
 res["enhancement"] = enh
 
 # --- inference ---

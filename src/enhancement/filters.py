@@ -71,11 +71,11 @@ def bilateral_t(img: torch.Tensor, k=5, sigma_s=2.0, sigma_r=0.1):
 # ----------------------------- composite -------------------------------------
 
 class Enhancer:
-    """Configurable chain, e.g. ``Enhancer(["median", "bilateral", "clahe"])``."""
+    """Configurable chain, e.g. ``Enhancer(["median", "bilateral", "clahe"])`` (default: median + bilateral)."""
 
     STEPS_T = {"median": median_t, "wiener": wiener_t, "bilateral": bilateral_t}
 
-    def __init__(self, steps=("median", "bilateral", "clahe"), **kw):
+    def __init__(self, steps=("median", "bilateral"), **kw):
         self.steps = list(steps)
         self.kw = kw
 
