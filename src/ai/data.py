@@ -1,6 +1,7 @@
 """Datasets for the segmentation model: synthetic phantoms and (optionally) BUSI."""
 from __future__ import annotations
 
+import glob
 from pathlib import Path
 
 import cv2
@@ -41,21 +42,28 @@ class SyntheticLesions(Dataset):
 class BUSI(Dataset):
     """Breast Ultrasound Images (Al-Dhabyani 2020) - ``Dataset_BUSI_with_GT``.
 
-    Layout: <root>/{benign,malignant,normal}/<name>.png and <name>_mask.png
-    (several ``_mask_N.png`` are merged).  Images are resized to ``shape``.
+    Layout: <root>/{benign,malignant,normal}/<name>.png with masks <name>_mask.png
+    (extra lesions: <name>_mask_1.png ...; merged).  'normal' images get empty masks.
+    Images are resized to ``shape`` (default 256x256; the model is fully
+    convolutional, so it can also run on the pipeline's 256x128 frames).
+
+    augment=True: random horizontal flip, 256x128 output (random crop or squeezed
+    whole image - the pipeline's frame size), mild gamma/brightness jitter.
     """
 
-    def __init__(self, root, shape=(256, 128), classes=("benign", "malignant", "normal")):
-        self.shape = shape
-        self.items = []
+    def __init__(self, root, shape=(256, 256), classes=("benign", "malignant", "normal"),
+                 augment=False, crop_w=128, indices=None):
+        self.shape, self.augment, self.crop_w = shape, augment, crop_w
+        items = []
         for cls in classes:
             for p in sorted((Path(root) / cls).glob("*.png")):
                 if "_mask" in p.name:
                     continue
-                masks = sorted(p.parent.glob(p.stem + "_mask*.png"))
-                self.items.append((p, masks, cls))
-        if not self.items:
-            raise FileNotFoundError(f"no BUSI images under {root}")
+                masks = sorted(p.parent.glob(glob.escape(p.stem) + "_mask*.png"))
+                items.append((p, masks, cls))
+        if not items:
+            raise FileNotFoundError(f"no BUSI images under {root} (expected benign/malignant/normal sub-folders)")
+        self.items = items if indices is None else [items[i] for i in indices]
 
     def __len__(self):
         return len(self.items)
@@ -64,9 +72,22 @@ class BUSI(Dataset):
         p, masks, cls = self.items[i]
         h, w = self.shape
         img = cv2.resize(cv2.imread(str(p), cv2.IMREAD_GRAYSCALE), (w, h), interpolation=cv2.INTER_AREA)
+        img = img.astype(np.float32) / 255.0
         m = np.zeros((h, w), np.float32)
         for mp in masks:
             mm = cv2.resize(cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE), (w, h), interpolation=cv2.INTER_NEAREST)
             m = np.maximum(m, (mm > 127).astype(np.float32))
-        img = normalize_bmode(img.astype(np.float32) / 255.0)   # same per-frame level normalisation as inference
-        return torch.from_numpy(img)[None], torch.from_numpy(m)[None]
+        if self.augment:
+            rng = np.random.default_rng()
+            if rng.random() < 0.5:
+                img, m = img[:, ::-1], m[:, ::-1]
+            if self.crop_w and w > self.crop_w:               # always output (h, crop_w) so batches collate
+                if rng.random() < 0.7:
+                    x0 = int(rng.integers(0, w - self.crop_w + 1))
+                    img, m = img[:, x0:x0 + self.crop_w], m[:, x0:x0 + self.crop_w]
+                else:                                           # whole image squeezed to the pipeline aspect
+                    img = cv2.resize(np.ascontiguousarray(img), (self.crop_w, h), interpolation=cv2.INTER_AREA)
+                    m = (cv2.resize(np.ascontiguousarray(m), (self.crop_w, h), interpolation=cv2.INTER_AREA) > 0.5).astype(np.float32)
+            img = np.clip(img ** rng.uniform(0.8, 1.25) + rng.uniform(-0.08, 0.08), 0, 1)
+        img = normalize_bmode(np.ascontiguousarray(img, dtype=np.float32))   # same per-frame normalisation as inference
+        return torch.from_numpy(img)[None], torch.from_numpy(np.ascontiguousarray(m))[None]

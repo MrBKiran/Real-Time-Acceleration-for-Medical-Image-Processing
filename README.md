@@ -90,6 +90,14 @@ python -m scripts.export_onnx                                # needs: pip instal
 ```
 
 ### Using the real datasets
+Only BUSI (and the synthetic phantoms) have lesion masks, so that is what the segmenter can train on. The Zenodo raw-RF sets have no segmentation labels; use them to test the pipeline.
+```bash
+# BUSI + synthetic phantoms mixed 50/50 per epoch; keeps the epoch with best BUSI-validation Dice
+python -m src.ai.train --data all --busi-root path/to/Dataset_BUSI_with_GT --epochs 30
+# optionally start from the synthetic-pretrained weights:  --init models/tinyunet.pt
+```
+BUSI has no patient IDs, so the image-level validation split can leak near-duplicates and its Dice is optimistic.
+
 ```bash
 # Zenodo 7986407 (your existing data) -> pipeline format (check --t0 against your header!)
 python -m scripts.convert_zenodo_mat --glob "7986407/CIRS073_RUMC/**/USDATA_*.mat" \
