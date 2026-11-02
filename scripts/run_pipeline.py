@@ -48,7 +48,7 @@ piped = Application(sync).add_flow(*ops).run(a.frames)
 
 # ---- quality on frame 0 of the simulated sequence (ground truth known) ----
 res = dict(device=str(dev), grid=[a.nz, a.nx], n_angles=int(len(d["angles"])), serial=serial, pipelined=piped)
-if float(d["step"]) > 0 or "step" in d:
+if float(d["step"]) > 0:   # simulated sequence only: lesion masks are known
     fr = sink.frames[0]
     shift = float(d["step"]) * fr["idx"]
     m = lesion_mask(X, Z, shift, which=[0]).astype(bool)      # anechoic cyst

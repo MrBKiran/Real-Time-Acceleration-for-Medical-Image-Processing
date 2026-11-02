@@ -1,17 +1,17 @@
 {
  "raw": {
-  "dice": 0.7998197529803335,
-  "iou": 0.6673581668995695
+  "dice": 0.9597355715088246,
+  "iou": 0.9225942225628607
  },
  "enhanced": {
-  "dice": 0.5208910494202196,
-  "iou": 0.3535346457407093
+  "dice": 0.958694151360853,
+  "iou": 0.9206702028677256
  },
  "lesion_recall_enhanced": {
   "anechoic cyst": 1.0,
-  "hypoechoic": 1.0,
-  "hyperechoic": 0.08456772418663251
+  "hypoechoic": 0.999915994623656,
+  "hyperechoic": 0.9270298737822761
  },
- "mean_detections_per_frame": 5.333333333333333,
+ "mean_detections_per_frame": 3.0,
  "true_lesions_per_frame": 3
 }

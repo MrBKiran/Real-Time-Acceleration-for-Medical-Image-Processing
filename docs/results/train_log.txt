@@ -1,1 +1,12 @@
 TinyUNet params: 121,033  device=cpu  train=1500 val=187
+epoch 1/10 loss 1.4893 val dice 0.489 iou 0.406 (88s)
+epoch 2/10 loss 1.2601 val dice 0.503 iou 0.430 (87s)
+epoch 3/10 loss 0.8718 val dice 0.924 iou 0.898 (96s)
+epoch 4/10 loss 0.5255 val dice 0.902 iou 0.877 (91s)
+epoch 5/10 loss 0.4138 val dice 0.964 iou 0.942 (87s)
+epoch 6/10 loss 0.3840 val dice 0.976 iou 0.954 (86s)
+epoch 7/10 loss 0.3709 val dice 0.979 iou 0.960 (83s)
+epoch 8/10 loss 0.3628 val dice 0.979 iou 0.961 (84s)
+epoch 9/10 loss 0.3597 val dice 0.975 iou 0.957 (85s)
+epoch 10/10 loss 0.3579 val dice 0.975 iou 0.957 (84s)
+saved models/tinyunet.pt
