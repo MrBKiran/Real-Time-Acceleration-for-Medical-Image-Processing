@@ -59,7 +59,7 @@ class TorchDAS:
             self._lp = torch.as_tensor(h, dtype=torch.float32, device=dev).view(1, 1, -1)
         self._lut = None
         self._ns = None
-        est = len(self.angles) * self.nz * self.nx * self.nch * 16
+        est = len(self.angles) * self.nz * self.nx * self.nch * 24
         self._use_lut = est <= lut_budget_bytes
 
     def _prep(self, ia, ns):
@@ -69,17 +69,18 @@ class TorchDAS:
         frac = s - i0
         i0 = i0.long()
         valid = (i0 >= 0) & (i0 < ns - 1)
-        idx = torch.where(valid, i0 + self.ch_off, torch.zeros_like(i0))
+        idx = torch.where(valid, i0 * self.nch + self.ch_off, torch.zeros_like(i0))   # [sample, channel] layout: neighbouring channels are adjacent in memory
         wv = self.w * valid
         if self.mode == "iq":
             cycles = self.fc * (s.double() / self.fs + self.t0)       # absolute time -> carrier phase
             ph = 2 * np.pi * (cycles - torch.floor(cycles))
             wv = torch.polar(wv, ph.float())                          # w * exp(+j 2 pi fc tau)
-        return idx.to(torch.int32), frac, wv
+        w2 = torch.stack([wv * (1 - frac), wv * frac], -1)           # interpolation folded into the weights
+        return idx, w2
 
     def _build_lut(self, ns):
         self._ns = ns
-        self.ch_off = torch.arange(self.nch, device=self.device) * ns
+        self.ch_off = torch.arange(self.nch, device=self.device)
         self._lut = [self._prep(ia, ns) for ia in range(len(self.angles))] if self._use_lut else None
 
     def _demod(self, rf):
@@ -107,11 +108,10 @@ class TorchDAS:
         data = self._demod(rf) if self.mode == "iq" else rf
         out = torch.zeros(self.nz, self.nx, device=self.device, dtype=data.dtype)
         for ia in range(na):
-            flat = data[ia].reshape(-1)
-            idx, frac, wv = self._lut[ia] if self._lut is not None else self._prep(ia, ns)
-            idx = idx.long()
-            samp = (1 - frac) * flat[idx] + frac * flat[idx + 1]
-            out += (samp * wv).sum(-1) * self.inv_wsum
+            flat = data[ia].T.contiguous().reshape(-1)               # [sample, channel] layout
+            pair = torch.stack([flat, torch.cat([flat[self.nch:], flat[:self.nch]])], -1)   # (s0, s1) per sample
+            idx, w2 = self._lut[ia] if self._lut is not None else self._prep(ia, ns)
+            out += (pair[idx] * w2).sum((-1, -2)) * self.inv_wsum
         return out / na
 
     def envelope(self, rf):

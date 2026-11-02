@@ -26,11 +26,15 @@ ap.add_argument("--fps", type=float, default=None, help="throttle source to emul
 ap.add_argument("--device", default="auto")
 ap.add_argument("--nx", type=int, default=128)
 ap.add_argument("--nz", type=int, default=256)
+ap.add_argument("--n-angles", type=int, default=None, help="use an evenly spaced subset of the transmit angles")
 ap.add_argument("--out", default="docs/results")
 a = ap.parse_args()
 
 out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
 d = load_npz(a.data)
+if a.n_angles:
+    sel = np.round(np.linspace(0, len(d['angles']) - 1, a.n_angles)).astype(int)
+    d['rf'], d['angles'] = d['rf'][:, sel], d['angles'][sel]
 dev = get_device(a.device)
 sync = (lambda: torch.cuda.synchronize()) if dev.type == "cuda" else None
 das, X, Z = make_das(d, a.nx, a.nz, a.device)

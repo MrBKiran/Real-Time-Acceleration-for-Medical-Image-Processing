@@ -14,8 +14,11 @@ from src.simulation.ultrasound import fast_bmode_phantom
 class SyntheticLesions(Dataset):
     """Infinite-ish stream of labelled speckle phantoms (deterministic per index)."""
 
-    def __init__(self, n=2000, shape=(256, 128), seed=0, augment=True):
-        self.n, self.shape, self.seed, self.augment = n, shape, seed, augment
+    def __init__(self, n=2000, shape=(256, 128), seed=0, augment=True, enhance_prob=0.7):
+        # The deployed pipeline feeds the model *enhanced* frames, so most training
+        # frames go through the same enhancement chain (train/inference match).
+        self.n, self.shape, self.seed, self.augment, self.enhance_prob = n, shape, seed, augment, enhance_prob
+        self._enh = None
 
     def __len__(self):
         return self.n
@@ -23,6 +26,11 @@ class SyntheticLesions(Dataset):
     def __getitem__(self, i):
         rng = np.random.default_rng(self.seed * 1_000_003 + i)
         img, mask, _ = fast_bmode_phantom(*self.shape, n_lesions=int(rng.integers(0, 3)), rng=rng)
+        if rng.random() < self.enhance_prob:
+            if self._enh is None:
+                from src.enhancement.filters import Enhancer
+                self._enh = Enhancer()
+            img = self._enh(torch.from_numpy(img)).numpy().astype(np.float32)
         if self.augment and rng.random() < 0.5:
             img, mask = img[:, ::-1].copy(), mask[:, ::-1].copy()
         return torch.from_numpy(img)[None], torch.from_numpy(mask.astype(np.float32))[None]

@@ -15,6 +15,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
 
+torch.set_num_threads(2)
+
 from src.ai.data import BUSI, SyntheticLesions
 from src.ai.model import TinyUNet, n_params
 
@@ -57,7 +59,7 @@ def main(argv=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if a.data == "synthetic":
         train_ds = SyntheticLesions(a.n, seed=1)
-        val_ds = SyntheticLesions(max(100, a.n // 8), seed=2, augment=False)
+        val_ds = SyntheticLesions(max(100, a.n // 8), seed=2, augment=False, enhance_prob=1.0)  # validate on the deployed (enhanced) distribution
     else:
         full = BUSI(a.busi_root)
         nv = max(1, int(0.15 * len(full)))
