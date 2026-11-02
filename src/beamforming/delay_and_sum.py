@@ -2,10 +2,10 @@
 import numpy as np
 
 from src.config import C, FS, F_NUMBER
+from src.beamforming.geometry import transmit_delay_plane_wave
 
 def transmit_delay(X, Z, angle_deg, c=C):
-    theta = np.deg2rad(-angle_deg)
-    return (X*np.sin(theta) + Z*np.cos(theta))/c
+    return transmit_delay_plane_wave(X, Z, angle_deg, c)
 
 
 def receive_delay(X, Z, element_x, c=C):
@@ -15,15 +15,16 @@ def receive_delay(X, Z, element_x, c=C):
     )/c
 
 
-def beamform_single_angle(rf, X, Z, element_x, angle_deg):
+def beamform_single_angle(rf, X, Z, element_x, angle_deg, fs=FS, c=C, t0=0.0):
+    """NumPy reference (slow, easy to read). The fast path is TorchDAS."""
 
-    tx = transmit_delay(X, Z, angle_deg)
+    tx = transmit_delay(X, Z, angle_deg, c)
 
-    rx = receive_delay(X, Z, element_x)
+    rx = receive_delay(X, Z, element_x, c)
 
     total_delay = tx[..., None] + rx
 
-    sample = total_delay * FS
+    sample = (total_delay - t0) * fs
 
     idx0 = np.floor(sample).astype(np.int32)
     idx1 = idx0 + 1
