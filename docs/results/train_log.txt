@@ -1,1 +1,1 @@
-TinyUNet params: 121,033  device=cpu  train=1200 val=150
+TinyUNet params: 121,033  device=cpu  train=1500 val=187

@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from src.ai.normalize import normalize_bmode
 from src.simulation.ultrasound import fast_bmode_phantom
 
 
@@ -31,6 +32,7 @@ class SyntheticLesions(Dataset):
                 from src.enhancement.filters import Enhancer
                 self._enh = Enhancer()
             img = self._enh(torch.from_numpy(img)).numpy().astype(np.float32)
+        img = normalize_bmode(img)
         if self.augment and rng.random() < 0.5:
             img, mask = img[:, ::-1].copy(), mask[:, ::-1].copy()
         return torch.from_numpy(img)[None], torch.from_numpy(mask.astype(np.float32))[None]
@@ -66,4 +68,5 @@ class BUSI(Dataset):
         for mp in masks:
             mm = cv2.resize(cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE), (w, h), interpolation=cv2.INTER_NEAREST)
             m = np.maximum(m, (mm > 127).astype(np.float32))
-        return torch.from_numpy(img.astype(np.float32) / 255.0)[None], torch.from_numpy(m)[None]
+        img = normalize_bmode(img.astype(np.float32) / 255.0)   # same per-frame level normalisation as inference
+        return torch.from_numpy(img)[None], torch.from_numpy(m)[None]

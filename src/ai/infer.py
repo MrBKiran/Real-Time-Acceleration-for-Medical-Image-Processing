@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from src.ai.model import TinyUNet
+from src.ai.normalize import normalize_bmode
 
 
 class LesionDetector:
@@ -20,7 +21,7 @@ class LesionDetector:
 
     @torch.no_grad()
     def __call__(self, img):
-        x = torch.as_tensor(img, dtype=torch.float32, device=self.device)[None, None]
+        x = normalize_bmode(torch.as_tensor(img, dtype=torch.float32, device=self.device))[None, None]
         if self.half:
             x = x.half()
         return torch.sigmoid(self.model(x))[0, 0].float()

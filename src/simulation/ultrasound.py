@@ -98,11 +98,15 @@ def make_scatterers(x_lim, z_lim, density_per_mm2=40.0, lesions=(), points=(), s
 
 
 def fast_bmode_phantom(nz=256, nx=128, n_lesions=None, rng=None,
-                       speckle_sigma=(1.1, 1.5), allow_hyper=True):
+                       speckle_sigma=None, allow_hyper=True, randomize=True):
     """Fast speckle phantom.  Returns (log-compressed image in [0,1], mask uint8, env).
 
     Fully developed speckle = |complex Gaussian noise (x) PSF|.  Lesions modulate
     the underlying scatterer amplitude, giving realistic CNR behaviour.
+
+    ``randomize`` applies domain randomisation (speckle size, depth-gain curve,
+    noise floor, global brightness, lesion contrast) so a model trained on these
+    frames is not tied to one simulator's absolute levels.
     """
     rng = rng or np.random.default_rng()
     amp = np.ones((nz, nx), np.float32)
@@ -117,14 +121,26 @@ def fast_bmode_phantom(nz=256, nx=128, n_lesions=None, rng=None,
         u = (dx * np.cos(ang) + dz * np.sin(ang)) / rx
         v = (-dx * np.sin(ang) + dz * np.cos(ang)) / rz
         inside = u ** 2 + v ** 2 < 1
-        gain = rng.choice([0.0, 0.05, 0.15, 3.0] if allow_hyper else [0.0, 0.05, 0.15])
+        if allow_hyper and rng.random() < 0.35:
+            gain = rng.uniform(2.0, 5.0)                      # hyperechoic
+        else:
+            gain = rng.choice([0.0, 0.05, 0.12, 0.2])         # anechoic .. hypoechoic
         amp[inside] = max(gain, 0.01)
         mask[inside] = 1
-    # slow attenuation / TGC residual
+    # slow attenuation / TGC residual (random smooth depth-gain curve)
     amp *= np.exp(-np.linspace(0, rng.uniform(0.0, 0.6), nz))[:, None]
+    if randomize:
+        knots = rng.normal(0, 0.25, 5)                        # +-~2 dB wobble over depth
+        amp *= np.exp(np.interp(np.linspace(0, 4, nz), np.arange(5), knots))[:, None]
+    if speckle_sigma is None:
+        speckle_sigma = (rng.uniform(0.9, 1.4), rng.uniform(1.2, 2.2)) if randomize else (1.1, 1.5)
     noise = rng.normal(size=(2, nz, nx)).astype(np.float32) * amp
     re = gaussian_filter(noise[0], speckle_sigma)
     im = gaussian_filter(noise[1], speckle_sigma)
     env = np.hypot(re, im)
+    if randomize:                                              # electronic noise floor
+        env = np.hypot(env, rng.uniform(0.0, 0.05) * env.mean() * rng.rayleigh(1.0, env.shape))
     from src.signal.envelope import log_compress
-    return log_compress(env, 60).astype(np.float32), mask, env.astype(np.float32)
+    ref = env.max() * 10 ** (rng.uniform(-2.0, 12.0) / 20) if randomize else env.max()   # global brightness
+    img = np.clip(20 * np.log10(env / ref + 1e-12), -60, 0)
+    return ((img + 60) / 60).astype(np.float32), mask, env.astype(np.float32)
