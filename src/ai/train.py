@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -72,14 +73,17 @@ def main(argv=None):
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-3)
     ap.add_argument("--init", default=None, help="checkpoint to fine-tune from, e.g. models/tinyunet.pt")
-    ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--workers", type=int, default=0 if os.name == "nt" else 2,
+                    help="DataLoader processes (default 0 on Windows: spawn + paging-file limits)")
+    ap.add_argument("--amp", action="store_true", help="fp16 mixed precision on CUDA (off by default: the model is tiny)")
+    ap.add_argument("--clip", type=float, default=1.0, help="gradient-norm clip (0 = off)")
     ap.add_argument("--out", default="models/tinyunet.pt")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args(argv)
 
     torch.manual_seed(a.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    amp = device.type == "cuda"
+    amp = device.type == "cuda" and a.amp
 
     vals = {}                                   # name -> loader
     if a.data == "synthetic":
@@ -100,9 +104,9 @@ def main(argv=None):
             sampler = WeightedRandomSampler(weights, num_samples=int(max(len(busi_tr) / a.busi_fraction, a.n)), replacement=True)
             vals["synthetic"] = SyntheticLesions(150, seed=2, augment=False, enhance_prob=1.0)
     nw = a.workers
-    kw = dict(num_workers=nw, persistent_workers=nw > 0, pin_memory=amp)
+    kw = dict(num_workers=nw, persistent_workers=nw > 0, pin_memory=device.type == "cuda")
     tl = DataLoader(train_ds, a.batch, shuffle=sampler is None, sampler=sampler, drop_last=True, **kw)
-    vls = {k: DataLoader(v, 16, num_workers=nw) for k, v in vals.items()}
+    vls = {k: DataLoader(v, 16, num_workers=0) for k, v in vals.items()}   # small; avoids extra worker processes
 
     model = TinyUNet().to(device)
     if a.init:
@@ -115,26 +119,53 @@ def main(argv=None):
     sizes = {k: len(v) for k, v in vals.items()}
     print(f"TinyUNet params: {n_params(model):,}  device={device}  amp={amp}  train batches/epoch={len(tl)}  val={sizes}")
 
+    # data sanity check: catches NaN/inf or wrong-range inputs before they poison the weights
+    xb, yb = next(iter(tl))
+    print(f"batch check: x {tuple(xb.shape)} [{xb.min():.3f}, {xb.max():.3f}] mean {xb.mean():.3f} finite={bool(torch.isfinite(xb).all())} | "
+          f"y {tuple(yb.shape)} lesion-pixel fraction {yb.mean():.3f} finite={bool(torch.isfinite(yb).all())}")
+    if not (torch.isfinite(xb).all() and torch.isfinite(yb).all()):
+        raise SystemExit("non-finite values in the training data - check the dataset files")
+    if not all(torch.isfinite(p).all() for p in model.parameters()):
+        raise SystemExit("initial weights contain NaN/inf - delete the --init checkpoint and retry")
+
     key = "busi" if "busi" in vls else "synthetic"      # model selection metric
     best, hist = -1.0, []
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     for ep in range(a.epochs):
         model.train()
-        t0, tot = time.time(), 0.0
+        t0, tot, nbad, nok = time.time(), 0.0, 0, 0
         for x, y in tl:
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            if not (torch.isfinite(x).all() and torch.isfinite(y).all()):
+                nbad += 1                                    # skip corrupt samples instead of training on them
+                continue
             with torch.autocast(device.type, enabled=amp):
                 lg = model(x)
             lg = lg.float()
             loss = F.binary_cross_entropy_with_logits(lg, y) + soft_dice_loss(lg, y)
+            if not torch.isfinite(loss):
+                nbad += 1
+                opt.zero_grad(set_to_none=True)
+                if nbad > 20:
+                    raise SystemExit("loss became NaN/inf repeatedly. Try without --amp, a lower --lr (e.g. 1e-3), or check the data.")
+                continue
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
+            if a.clip:
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), a.clip)
             scaler.step(opt)
             scaler.update()
             sched.step()
             tot += loss.item()
-        rec = dict(epoch=ep + 1, loss=tot / len(tl))
+            nok += 1
+        if nbad:
+            print(f"  warning: skipped {nbad} bad batches this epoch")
+        if nok == 0:
+            raise SystemExit("no valid batches in this epoch")
+        tot_loss = tot / nok
+        rec = dict(epoch=ep + 1, loss=tot_loss)
         for k, vl in vls.items():
             rec[f"{k}_dice"], rec[f"{k}_iou"] = evaluate(model, vl, device)
         hist.append(rec)
