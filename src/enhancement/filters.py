@@ -17,7 +17,7 @@ from scipy.ndimage import median_filter
 # ----------------------------- CPU reference ---------------------------------
 
 def median_cpu(img, k=3):
-    return median_filter(img, size=k, mode="reflect")
+    return median_filter(img, size=k, mode="nearest")
 
 
 def wiener_cpu(img, k=5):
@@ -38,7 +38,7 @@ def clahe_cpu(img, clip=2.0, tiles=(4, 4)):
 def _windows(x, k):
     """(1,1,H,W) -> (H*W, k*k) sliding windows with reflect padding."""
     p = k // 2
-    xp = F.pad(x, (p, p, p, p), mode="reflect")
+    xp = F.pad(x, (p, p, p, p), mode="replicate")
     return F.unfold(xp, k).squeeze(0).T
 
 
@@ -50,8 +50,8 @@ def median_t(img: torch.Tensor, k=3):
 def wiener_t(img: torch.Tensor, k=5):
     x = img[None, None]
     p = k // 2
-    mean = F.avg_pool2d(F.pad(x, (p,) * 4, mode="reflect"), k, 1)
-    var = (F.avg_pool2d(F.pad(x * x, (p,) * 4, mode="reflect"), k, 1) - mean ** 2).clamp_min(0)
+    mean = F.avg_pool2d(F.pad(x, (p,) * 4, mode="replicate"), k, 1)
+    var = (F.avg_pool2d(F.pad(x * x, (p,) * 4, mode="replicate"), k, 1) - mean ** 2).clamp_min(0)
     noise = var.mean()
     out = mean + (var - noise).clamp_min(0) / var.clamp_min(noise) * (x - mean)
     return out[0, 0].clamp(0, 1)

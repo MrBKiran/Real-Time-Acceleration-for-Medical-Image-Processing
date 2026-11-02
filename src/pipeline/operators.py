@@ -39,13 +39,10 @@ class BeamformOp(Operator):
         self.das, self.dr = das, dynamic_range
 
     def setup(self):          # warm-up builds the look-up tables
-        rf = np.zeros((len(self.das.angles), self.das.nch, 64), np.float32)
-        self.das(rf)
-        self.das._ns = None   # force rebuild with real record length
+        pass  # LUTs are built lazily on the first frame (needs the record length)
 
     def compute(self, f):
-        rf_img = self.das(f["rf"])
-        env = envelope(rf_img, dim=0)
+        env = self.das.envelope(f["rf"])
         f["bmode_raw"] = log_compress(env, self.dr)
         f["env"] = env
         return f
