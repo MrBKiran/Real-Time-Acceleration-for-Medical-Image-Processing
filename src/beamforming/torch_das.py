@@ -33,8 +33,11 @@ class TorchDAS:
         assert mode in ("iq", "rf")
         self.mode, self.fc = mode, float(fc)
         self.device = get_device(device)
-        self.fs, self.c, self.t0 = float(fs), float(c), float(t0)
+        self.fs, self.c = float(fs), float(c)
         self.angles = np.asarray(angles_deg, float)
+        # t0 = time (s) of sample 0 relative to the transmit reference; scalar or one value per angle
+        self.t0s = np.broadcast_to(np.asarray(t0, float), self.angles.shape).copy()
+        self.t0 = float(self.t0s.mean())
         self.nz, self.nx = X.shape
         ex = np.asarray(element_x, np.float64)
         self.nch = ex.size
@@ -50,8 +53,8 @@ class TorchDAS:
         self.w = torch.where(inside, 0.5 * (1 + torch.cos(np.pi * dxe / half)), torch.zeros_like(dxe))
         self.inv_wsum = 1.0 / self.w.sum(-1).clamp_min(1e-6)         # (nz,nx)
         self.tx_samples = [
-            ((torch.as_tensor(transmit_delay_plane_wave(X, Z, a, c), dtype=torch.float32, device=dev) - t0) * fs)
-            for a in self.angles
+            ((torch.as_tensor(transmit_delay_plane_wave(X, Z, a, c), dtype=torch.float32, device=dev) - ta) * fs)
+            for a, ta in zip(self.angles, self.t0s)
         ]
         if mode == "iq":
             from scipy.signal import firwin
@@ -72,7 +75,7 @@ class TorchDAS:
         idx = torch.where(valid, i0 * self.nch + self.ch_off, torch.zeros_like(i0))   # [sample, channel] layout: neighbouring channels are adjacent in memory
         wv = self.w * valid
         if self.mode == "iq":
-            cycles = self.fc * (s.double() / self.fs + self.t0)       # absolute time -> carrier phase
+            cycles = self.fc * (s.double() / self.fs + self.t0s[ia])  # absolute time -> carrier phase
             ph = 2 * np.pi * (cycles - torch.floor(cycles))
             wv = torch.polar(wv, ph.float())                          # w * exp(+j 2 pi fc tau)
         w2 = torch.stack([wv * (1 - frac), wv * frac], -1)           # interpolation folded into the weights
@@ -86,13 +89,16 @@ class TorchDAS:
     def _demod(self, rf):
         """(A,nch,ns) real -> complex baseband with absolute-time reference."""
         ns = rf.shape[-1]
-        t = torch.arange(ns, device=self.device, dtype=torch.float64) / self.fs + self.t0
+        t0 = torch.as_tensor(self.t0s, dtype=torch.float64, device=self.device).view(-1, 1, 1)
+        t = torch.arange(ns, device=self.device, dtype=torch.float64).view(1, 1, -1) / self.fs + t0   # (A,1,ns)
         cyc = self.fc * t
         ph = (2 * np.pi * (cyc - torch.floor(cyc))).float()
-        x = rf.reshape(-1, 1, ns)
         pad = self._lp.shape[-1] // 2
-        re = torch.nn.functional.conv1d(torch.nn.functional.pad(x * torch.cos(ph), (pad, pad), mode="replicate"), self._lp)
-        im = torch.nn.functional.conv1d(torch.nn.functional.pad(-x * torch.sin(ph), (pad, pad), mode="replicate"), self._lp)
+        F_ = torch.nn.functional
+        mix_re = (rf * torch.cos(ph)).reshape(-1, 1, ns)           # (A,nch,ns) * (A,1,ns), then flatten for conv
+        mix_im = (-rf * torch.sin(ph)).reshape(-1, 1, ns)
+        re = F_.conv1d(F_.pad(mix_re, (pad, pad), mode="replicate"), self._lp)
+        im = F_.conv1d(F_.pad(mix_im, (pad, pad), mode="replicate"), self._lp)
         return (2 * torch.complex(re, im)).reshape(rf.shape)
 
     @torch.no_grad()
@@ -113,6 +119,24 @@ class TorchDAS:
             idx, w2 = self._lut[ia] if self._lut is not None else self._prep(ia, ns)
             out += (pair[idx] * w2).sum((-1, -2)) * self.inv_wsum
         return out / na
+
+    @torch.no_grad()
+    def angle_images(self, rf):
+        """Per-angle (uncompounded) images, shape (n_angles, nz, nx); used by the t0 autofocus."""
+        rf = torch.as_tensor(rf, dtype=torch.float32, device=self.device)
+        if rf.ndim == 4:
+            rf = rf[:, 0]
+        na, nch, ns = rf.shape
+        if self._ns != ns:
+            self._build_lut(ns)
+        data = self._demod(rf) if self.mode == "iq" else rf
+        out = []
+        for ia in range(na):
+            flat = data[ia].T.contiguous().reshape(-1)
+            pair = torch.stack([flat, torch.cat([flat[self.nch:], flat[:self.nch]])], -1)
+            idx, w2 = self._lut[ia] if self._lut is not None else self._prep(ia, ns)
+            out.append((pair[idx] * w2).sum((-1, -2)) * self.inv_wsum)
+        return torch.stack(out)
 
     def envelope(self, rf):
         """Envelope image regardless of mode (Hilbert along z for rf mode)."""

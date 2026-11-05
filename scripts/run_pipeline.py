@@ -36,6 +36,8 @@ d = load_npz(a.data)
 if a.n_angles:
     sel = np.round(np.linspace(0, len(d['angles']) - 1, a.n_angles)).astype(int)
     d['rf'], d['angles'] = d['rf'][:, sel], d['angles'][sel]
+    if np.ndim(d['t0']) > 0:                      # per-angle t0 (e.g. from --t0 auto)
+        d['t0'] = d['t0'][sel]
 dev = get_device(a.device)
 sync = (lambda: torch.cuda.synchronize()) if dev.type == "cuda" else None
 das, X, Z = make_das(d, a.nx, a.nz, a.device)

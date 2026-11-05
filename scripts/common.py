@@ -67,7 +67,7 @@ def make_das(meta, nx=128, nz=256, device="auto", **kw):
     ex = element_positions(int(meta["n_el"]), float(meta["pitch"]))
     X, Z = create_grid(*meta["x_lim"], *meta["z_lim"], nx=nx, nz=nz)
     return TorchDAS(ex, X, Z, meta["angles"], float(meta["fs"]), float(meta["c"]),
-                    float(meta["t0"]), device=device, **kw), X, Z
+                    np.asarray(meta["t0"], float), device=device, fc=float(meta["fc"]), **kw), X, Z
 
 
 def build_components(npz_path, ckpt, device="auto"):
