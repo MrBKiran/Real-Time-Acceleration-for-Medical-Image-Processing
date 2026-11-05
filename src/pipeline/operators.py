@@ -69,7 +69,33 @@ class InferOp(Operator):
         self.det(torch.zeros(256, 128))
 
     def compute(self, f):
-        f["prob"] = self.det(f["bmode"])
+        if getattr(self.det, "classes", None):
+            f["prob"], f["class_prob"] = self.det.segment_and_classify(f["bmode"])
+        else:
+            f["prob"] = self.det(f["bmode"])
+        return f
+
+
+class MotionOp(Operator):
+    """Speckle-tracking motion estimate between consecutive frames (optical flow).
+
+    Adds ``motion_mm`` = (lateral, axial) displacement since the previous frame.
+    Runs on the raw (unfiltered) B-mode: speckle is the pattern being tracked.
+    """
+    name = "motion"
+
+    def __init__(self, dx_mm, dz_mm, key="bmode_raw"):
+        self.dx, self.dz, self.key = dx_mm, dz_mm, key
+        self._prev = None
+
+    def setup(self):
+        self._prev = None
+
+    def compute(self, f):
+        from src.motion.flow import bulk_motion, dense_flow
+        cur = f[self.key].detach().cpu().numpy()
+        f["motion_mm"] = (0.0, 0.0) if self._prev is None else bulk_motion(dense_flow(self._prev, cur), self.dx, self.dz)
+        self._prev = cur
         return f
 
 
@@ -83,7 +109,7 @@ class CollectSink(Operator):
 
     def compute(self, f):
         if f["idx"] % self.keep_every == 0:
-            out = {"idx": f["idx"]}
+            out = {"idx": f["idx"], "motion_mm": f.get("motion_mm"), "class_prob": f.get("class_prob")}
             for k in ("bmode_raw", "bmode", "prob"):
                 if k in f:
                     out[k] = f[k].detach().cpu().numpy() if self.to_cpu else f[k]

@@ -71,10 +71,11 @@ def make_das(meta, nx=128, nz=256, device="auto", **kw):
 
 
 def build_components(npz_path, ckpt, device="auto"):
-    """Used by the Holoscan entry point: returns (frames, [bf, enh, infer, sink])."""
+    """Used by the Holoscan entry point: returns (frames, [bf, motion, enh, infer, sink])."""
     from src.ai.infer import LesionDetector
     from src.enhancement.filters import Enhancer
-    from src.pipeline.operators import BeamformOp, CollectSink, EnhanceOp, InferOp
+    from src.pipeline.operators import BeamformOp, CollectSink, EnhanceOp, InferOp, MotionOp
     d = load_npz(npz_path)
-    das, _, _ = make_das(d, device=device)
-    return list(d["rf"]), [BeamformOp(das), EnhanceOp(Enhancer()), InferOp(LesionDetector(ckpt, device)), CollectSink()]
+    das, X, Z = make_das(d, device=device)
+    motion = MotionOp((X[0, 1] - X[0, 0]) * 1e3, (Z[1, 0] - Z[0, 0]) * 1e3)
+    return list(d["rf"]), [BeamformOp(das), motion, EnhanceOp(Enhancer()), InferOp(LesionDetector(ckpt, device)), CollectSink()]

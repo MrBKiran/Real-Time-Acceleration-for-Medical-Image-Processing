@@ -12,10 +12,18 @@ def _block(i, o):
 
 
 class TinyUNet(nn.Module):
-    """~120k parameters at base=8 - small enough for real-time edge inference."""
+    """~120k parameters at base=8 - small enough for real-time edge inference.
 
-    def __init__(self, base=8, in_ch=1, out_ch=1):
+    ``n_classes > 0`` adds an image-level classification head (e.g. BUSI
+    benign / malignant / normal) on the globally pooled bottleneck, so one
+    forward pass gives both the lesion mask and the class.  ``forward`` always
+    returns only the segmentation logits (pipeline / ONNX compatible);
+    ``forward_both`` returns (seg_logits, class_logits).
+    """
+
+    def __init__(self, base=8, in_ch=1, out_ch=1, n_classes=0):
         super().__init__()
+        self.n_classes = n_classes
         b = base
         self.e1, self.e2, self.e3 = _block(in_ch, b), _block(b, 2 * b), _block(2 * b, 4 * b)
         self.bott = _block(4 * b, 8 * b)
@@ -23,8 +31,28 @@ class TinyUNet(nn.Module):
         self.u2, self.d2 = nn.ConvTranspose2d(4 * b, 2 * b, 2, 2), _block(4 * b, 2 * b)
         self.u1, self.d1 = nn.ConvTranspose2d(2 * b, b, 2, 2), _block(2 * b, b)
         self.head = nn.Conv2d(b, out_ch, 1)
+        if n_classes:
+            # input: [global mean, mask-weighted mean, global max] of bottleneck features + lesion area
+            self.cls_head = nn.Sequential(nn.Linear(3 * 8 * b + 1, 32), nn.ReLU(inplace=True),
+                                          nn.Dropout(0.2), nn.Linear(32, n_classes))
 
     def forward(self, x):
+        return self._run(x)[0]
+
+    def forward_both(self, x):
+        seg, b = self._run(x)
+        if not self.n_classes:
+            raise RuntimeError("model has no classification head (n_classes=0)")
+        # lesion-focused pooling: the class depends on what is inside the lesion, its size and shape
+        H, W = x.shape[-2:]
+        m = torch.sigmoid(F.pad(seg, (0, b.shape[-1] * 8 - W, 0, b.shape[-2] * 8 - H))).detach()
+        m = F.avg_pool2d(m, 8)                                            # to bottleneck resolution
+        area = m.mean((-2, -1))                                           # (N, 1) lesion area fraction
+        masked = (b * m).sum((-2, -1)) / (m.sum((-2, -1)) + 1e-3)
+        feats = torch.cat([b.mean((-2, -1)), masked, b.amax((-2, -1)), area], 1)
+        return seg, self.cls_head(feats)
+
+    def _run(self, x):
         H, W = x.shape[-2:]
         ph, pw = (-H) % 8, (-W) % 8                       # pad to multiple of 8
         x = F.pad(x, (0, pw, 0, ph), mode="reflect")
@@ -35,7 +63,7 @@ class TinyUNet(nn.Module):
         d3 = self.d3(torch.cat([self.u3(b), e3], 1))
         d2 = self.d2(torch.cat([self.u2(d3), e2], 1))
         d1 = self.d1(torch.cat([self.u1(d2), e1], 1))
-        return self.head(d1)[..., :H, :W]
+        return self.head(d1)[..., :H, :W], b
 
 
 def n_params(m):

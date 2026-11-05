@@ -45,3 +45,22 @@ def test_split_is_disjoint_and_train_all_runs(tmp_path):
           "--batch", "4", "--workers", "0", "--out", str(out)])
     ck = torch.load(out, weights_only=False)
     assert ck["data"] == "all" and "busi_dice" in ck["history"][0] and "synthetic_dice" in ck["history"][0]
+
+
+def test_classify_head_training_and_inference(tmp_path):
+    from src.ai.infer import LesionDetector
+    _fake_busi(tmp_path)
+    tr, va = split_busi(tmp_path, 0.2, 0, classify=True)
+    labels_va = va.labels()
+    assert set(labels_va) == {0, 1, 2}                     # stratified: every class in validation
+    x, y, lab = tr[0]
+    assert x.shape == (1, 256, 128) and lab.item() in (0, 1, 2)
+    out = tmp_path / "c.pt"
+    main(["--data", "all", "--busi-root", str(tmp_path), "--classify", "--n", "16", "--epochs", "1",
+          "--batch", "4", "--workers", "0", "--out", str(out), "--init", "models/tinyunet.pt"])
+    ck = torch.load(out, weights_only=False)
+    assert ck["n_classes"] == 3 and "busi_acc" in ck["history"][0]
+    det = LesionDetector(str(out), "cpu")
+    prob, cls = det.segment_and_classify(torch.rand(256, 128))
+    assert prob.shape == (256, 128) and set(cls) == {"benign", "malignant", "normal"}
+    assert abs(sum(cls.values()) - 1) < 1e-5

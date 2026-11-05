@@ -73,14 +73,13 @@ if HAVE_HOLOSCAN:
 
         def compose(self):
             src = RFSourceOp(self, self._frames, CountCondition(self, self._n), name="rf_source")
-            bf, enh, inf, sink = self._ops
-            bf_, enh_, inf_ = (_Wrap(self, o, name=o.name) for o in (bf, enh, inf))
+            *procs, sink = self._ops                       # e.g. beamform, motion, enhance, inference | sink
+            wrapped = [_Wrap(self, o, name=o.name) for o in procs]
             sink_ = SinkOp(self, sink, name="sink")
-            self.add_flow(src, bf_, {("rf", "in")})
-            self.add_flow(bf_, enh_, {("out", "in")})
-            self.add_flow(enh_, inf_, {("out", "in")})
-            self.add_flow(inf_, sink_, {("out", "in")})
-
+            self.add_flow(src, wrapped[0], {("rf", "in")})
+            for a_, b_ in zip(wrapped, wrapped[1:]):
+                self.add_flow(a_, b_, {("out", "in")})
+            self.add_flow(wrapped[-1], sink_, {("out", "in")})
 
 def main():                              # pragma: no cover
     if not HAVE_HOLOSCAN:

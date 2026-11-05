@@ -1,6 +1,6 @@
 # Real-Time Acceleration for Medical Image Processing (open-source implementation)
 
-An end-to-end, real-time ultrasound pipeline — **raw RF channel data → beamforming → image enhancement → AI lesion segmentation → streaming display** — built entirely with open-source tools (NumPy / SciPy / OpenCV / PyTorch / ONNX), as an alternative to the MATLAB + GPU Coder + Holoscan workflow in MathWorks challenge project #259
+An end-to-end, real-time ultrasound pipeline — **raw RF channel data → beamforming → motion tracking → image enhancement → AI lesion segmentation (+ optional benign/malignant/normal classification) → streaming display** — built entirely with open-source tools (NumPy / SciPy / OpenCV / PyTorch / ONNX), as an alternative to the MATLAB + GPU Coder + Holoscan workflow in MathWorks challenge project #259
 ([project description](https://github.com/mathworks/MATLAB-Simulink-Challenge-Project-Hub/tree/main/projects/Real-Time%20Acceleration%20for%20Medical%20Image%20Processing)).
 
 ![pipeline](docs/results/pipeline_diagram.png)
@@ -18,7 +18,8 @@ Demo video (beamformed | enhanced | AI segmentation, 36 streamed frames of simul
 | 1. Reconstruct image from raw RF | Phased Array System Toolbox | Delay-and-sum plane-wave compounding: readable NumPy reference (`src/beamforming/delay_and_sum.py`, your original) + fast PyTorch IQ beamformer (`torch_das.py`) |
 | 1b. Convert to CUDA | GPU Coder | The PyTorch beamformer runs unchanged on CUDA; geometry is precomputed into look-up tables so each frame is a gather + MAC — the structure of a hand-written CUDA kernel |
 | 2. Enhancement | `medfilt2`, `wiener2`, `imbilatfilt`, `adapthisteq` | Median, Wiener, bilateral (torch/GPU-capable + SciPy/OpenCV references) and CLAHE (`src/enhancement/filters.py`) |
-| 3. AI detection | Deep Learning Toolbox CNN / U-Net | 121k-parameter U-Net in PyTorch (`src/ai/`), ONNX export for TensorRT / ONNX Runtime |
+| 3. AI detection / classification | Deep Learning Toolbox CNN / U-Net | 121k-parameter U-Net in PyTorch (`src/ai/`) with an optional benign/malignant/normal head trained on BUSI labels; ONNX export for TensorRT / ONNX Runtime |
+| Advanced: motion analysis | optical flow / RNN | Farneback optical-flow speckle tracking between frames (`src/motion/flow.py`, `MotionOp`) |
 | 4–5. CUDA + Holoscan | GPU Coder + Holoscan SDK | Holoscan-style operator graph (`src/pipeline/runtime.py`) + a Holoscan SDK app wrapping the same operators (`holoscan_app.py`, **not executed here**) |
 | 6. Evaluate | latency, throughput, visual quality | `scripts/benchmark.py`, `evaluate_quality.py`, `evaluate_ai.py`; results below |
 
@@ -27,14 +28,14 @@ Demo video (beamformed | enhanced | AI segmentation, 36 streamed frames of simul
 Read this first — it determines how far you can trust the numbers.
 
 * **No real data was processed in the development environment.** Zenodo (the 75-angle plane-wave breast/CIRS phantom dataset your earlier work used) and the other dataset hosts were unreachable from the sandbox. Everything below was measured on **simulated** plane-wave channel data produced by `src/simulation/ultrasound.py` (point-scatterer simulator → real beamforming code). The beamformer geometry is validated against known point-target positions; image-quality and AI numbers are on simulated phantoms with known lesions and **are not clinical evidence**.
-* **No GPU was available.** All timings are 4-core CPU. The CUDA path is the same code on `device="cuda"` but its speed is **not measured**; do not read the CPU numbers as the GPU result.
+* **No GPU was available in the development environment.** The tables below are 4-core CPU. One run on the project owner's CUDA machine is recorded separately below (GPU model and per-stage breakdown not yet recorded).
 * `scripts/convert_zenodo_mat.py` (real Zenodo `.mat` → pipeline format) follows the layout in your exploration notebook but was **not run on the real files**. Sample-0 time (`--t0`) must be taken from your header. `src/pipeline/holoscan_app.py` was written against the public Holoscan Python API but **never executed** (no Holoscan SDK / NVIDIA GPU).
 * ADI ADC hardware was not used; the `RFSource` operator is where an ADC capture stream would plug in.
 
 ## Results (simulated data, 4-core CPU)
 
 ### Beamforming correctness
-Point targets are reconstructed at the true position (|error| < 50 µm lateral / 30 µm axial on a target-centred grid) and amplitudes scale linearly with scatterer strength (0.69 measured for a 0.70 target). Covered by `tests/test_beamforming.py` (14 tests in total pass).
+Point targets are reconstructed at the true position (|error| < 50 µm lateral / 30 µm axial on a target-centred grid) and amplitudes scale linearly with scatterer strength (0.69 measured for a 0.70 target). Covered by `tests/test_beamforming.py` (19 tests in total pass).
 
 *Design finding:* beamforming real RF on a coarse grid aliases (grid spacing 0.18 mm > λ/2 ≈ 0.1 mm), and linear interpolation of a 7.8 MHz carrier sampled at 31 MHz loses up to 30 % amplitude. The default beamformer therefore demodulates to baseband (IQ) first; this allows the coarse grid and removes the Hilbert transform. `mode="rf"` is kept for comparison.
 
@@ -45,6 +46,10 @@ Point targets are reconstructed at the true position (|error| < 50 µm lateral /
 | 1 | 62 ms | 5 ms | 13 ms | **81 ms** (105) | 10.2 fps |
 | 3 | 238 ms | 6 ms | 14 ms | **257 ms** (308) | 3.9 fps |
 | 5 | 348 ms | 6 ms | 13 ms | **367 ms** (466) | 2.6 fps |
+
+These runs predate the motion stage, which adds about 13 ms per frame on CPU (`--no-motion` turns it off).
+
+**CUDA run on the project owner's machine** (5 angles, 256×128, same simulated data, same code): **95 ms end-to-end** (p95 111 ms), **10.4 fps** pipelined, about 3.9× faster than the CPU run. Lesion CNR/gCNR came out identical to the CPU run (2.16 → 4.20), which confirms that the GPU path computes the same images. `run_pipeline` now prints a per-stage table, so the GPU breakdown can be added on the next run.
 
 * **On this CPU the pipeline is not real-time at 5 angles**; at 1 angle it reaches ~10 fps. Beamforming is ~95 % of the time and is exactly the stage a GPU accelerates — expect the GPU to change the picture, but that is untested here.
 * The PyTorch beamformer is ~4× faster than the NumPy reference on the same CPU (60 vs 244 ms for 1 angle; 347 vs 1440 ms for 5).
@@ -64,6 +69,9 @@ Point targets are reconstructed at the true position (|error| < 50 µm lateral /
 
 Speckle filtering roughly doubles lesion CNR; smoothing costs a little edge sharpness (cyst-boundary gradient 0.148 → 0.115, `quality.json`). CLAHE *lowers* CNR (it amplifies speckle along with contrast) so it is optional, not default. Visual comparison: `docs/results/enhancement_comparison.png`.
 
+### Motion analysis (optical flow)
+Farneback dense optical flow on consecutive raw B-mode frames (speckle tracking); the median flow is the bulk tissue/probe motion. On the simulated sequence, where the tissue moves a known **0.150 mm/frame** laterally, the pipeline measures **0.1494 ± 0.0023 mm/frame** (mean absolute error 2 µm) and −0.0004 mm/frame axially. The estimate is shown in the demo video and stored in `pipeline_results.json`.
+
 ### AI lesion segmentation
 `TinyUNet` (121k parameters) trained on fast speckle phantoms with domain randomisation (speckle size, depth gain, noise floor, brightness, lesion contrast) and per-frame median normalisation, then evaluated on frames from a **different simulator** (full channel data → beamforming → enhancement), 12 frames, 3 lesions each:
 
@@ -74,13 +82,15 @@ Speckle filtering roughly doubles lesion CNR; smoothing costs a little edge shar
 
 3.0 detections per frame for 3 true lesions; recall 1.00 / 1.00 / 0.93 (anechoic / hypoechoic / hyperechoic). In-distribution validation Dice is 0.975.
 
+**Classification head (`--classify`).** One extra small head predicts benign / malignant / normal from the same forward pass. It pools the bottleneck features inside the predicted lesion mask, alongside the global mean, the max and the lesion area, because the class depends on the lesion's content, size and shape. Training uses class-weighted cross-entropy (BUSI is about 56 % benign) and a class-stratified split. With `--classify`, the checkpoint is selected on (Dice + balanced accuracy) / 2. **It has not been trained on real BUSI yet.** It was only checked for learnability on a synthetic three-class set, where it reached 0.89 balanced accuracy. A first version pooled only global features and selected on Dice, so it saved a checkpoint whose classifier was at chance; both were fixed.
+
 *What went wrong on the way (kept for honesty):* the first model reached Dice 0.93 on raw frames but only 0.48 on enhanced frames, missing the hyperechoic lesion (recall 0.08) — it had learned simulator-specific brightness and speckle statistics and was fed a different distribution than it trained on. Training on enhanced frames alone was not enough (Dice 0.52); domain randomisation + level normalisation fixed it. **Expect the same kind of gap on real BUSI/clinical images — the model has never seen a real image.**
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q tests                                   # 14 tests
+python -m pytest -q tests                                   # 19 tests
 python -m scripts.simulate_dataset --out data/sim_sequence.npz --frames 12
 python -m src.ai.train --epochs 10 --n 1500                 # or use the bundled models/tinyunet.pt
 python -m scripts.run_pipeline --data data/sim_sequence.npz --frames 36 [--n-angles 1]
@@ -95,7 +105,10 @@ Only BUSI (and the synthetic phantoms) have lesion masks, so that is what the se
 # BUSI + synthetic phantoms mixed 50/50 per epoch; keeps the epoch with best BUSI-validation Dice
 python -m src.ai.train --data all --busi-root path/to/Dataset_BUSI_with_GT --epochs 30
 # optionally start from the synthetic-pretrained weights:  --init models/tinyunet.pt
+# add a benign/malignant/normal head (selects on (Dice + balanced accuracy)/2, prints a confusion matrix):
+python -m src.ai.train --data all --busi-root path/to/Dataset_BUSI_with_GT --epochs 30 --classify --init models/tinyunet.pt
 ```
+On Windows the DataLoader defaults to `--workers 0` (avoids paging-file error 1455). Mixed precision is opt-in with `--amp`, because an fp16 run produced NaN weights on the owner's GPU.
 BUSI has no patient IDs, so the image-level validation split can leak near-duplicates and its Dice is optimistic.
 
 ```bash
@@ -110,7 +123,7 @@ python -m src.ai.train --data busi --busi-root path/to/Dataset_BUSI_with_GT
 `run_pipeline` computes lesion-CNR only for the simulated sequence (it needs known masks); on real data it still produces timings, panels and the video.
 
 ### NVIDIA Holoscan deployment
-Inside the official Holoscan container: `python -m src.pipeline.holoscan_app --rf data/sim_sequence.npz`. The operators (`RFSource → Beamform → Enhance → Infer → Sink`) are framework-independent callables, so results match the standalone runtime. Treat this file as a starting point: it has not been run.
+Inside the official Holoscan container: `python -m src.pipeline.holoscan_app --rf data/sim_sequence.npz`. The operators (`RFSource → Beamform → Motion → Enhance → Infer → Sink`) are framework-independent callables, so results match the standalone runtime. Treat this file as a starting point: it has not been run.
 
 ## Repository layout
 ```
@@ -118,18 +131,19 @@ src/beamforming/   geometry, grid, NumPy reference DAS (your original), torch_da
 src/signal/        NumPy envelope / log compression, torch versions
 src/simulation/    point-scatterer channel-data simulator + fast labelled speckle phantoms
 src/enhancement/   median / Wiener / bilateral (torch + CPU reference) and CLAHE
-src/ai/            TinyUNet, datasets (synthetic, BUSI), training, inference, normalisation
+src/ai/            TinyUNet (+ optional class head), datasets (synthetic, BUSI), training, inference, normalisation
+src/motion/        optical-flow motion estimation
 src/pipeline/      Operator/Application streaming runtime, operators, Holoscan app
 src/io/            .mat RF + header loaders (your original)
 scripts/           simulate, convert real data, run pipeline, benchmark, evaluate, ONNX export
-tests/             beamforming geometry, filters/metrics, pipeline runtime
+tests/             beamforming geometry, filters/metrics, pipeline runtime, motion, BUSI loader + training
 docs/results/      figures, demo video, JSON metrics
 ```
 
 ## Possible next steps
-* Run `scripts/benchmark.py` and `run_pipeline.py` on a CUDA machine (and add a fused CUDA/Triton gather kernel — the beamformer is gather-bound).
-* Validate on the real Zenodo / USTB data and fine-tune on BUSI; report Dice on real lesions.
-* Optional extensions from the brief: optical-flow motion analysis, UNet vs. transformer comparison, real ADI ADC capture into `RFSource`.
+* Record the per-stage CUDA breakdown (`run_pipeline` prints it) and the GPU model; if beamforming dominates, add a fused CUDA/Triton gather kernel.
+* Train on real BUSI (with `--classify`) and report Dice / balanced accuracy on real lesions; validate the pipeline on the real Zenodo / USTB data.
+* Remaining optional extensions from the brief: UNet vs. transformer comparison, real ADI ADC capture into `RFSource`.
 
 ## Reference
 Project brief: MathWorks MATLAB & Simulink Challenge Project Hub, project 259. Datasets named there: BUSI (Al-Dhabyani et al., *Data in Brief* 2020), Zenodo 545928, Zenodo 7986407, USTB datasets. This implementation was developed independently from the public description.

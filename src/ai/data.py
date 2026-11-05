@@ -16,11 +16,12 @@ from src.simulation.ultrasound import fast_bmode_phantom
 class SyntheticLesions(Dataset):
     """Infinite-ish stream of labelled speckle phantoms (deterministic per index)."""
 
-    def __init__(self, n=2000, shape=(256, 128), seed=0, augment=True, enhance_prob=0.7):
+    def __init__(self, n=2000, shape=(256, 128), seed=0, augment=True, enhance_prob=0.7, return_label=False):
         # The deployed pipeline feeds the model *enhanced* frames, so most training
         # frames go through the same enhancement chain (train/inference match).
         self.n, self.shape, self.seed, self.augment, self.enhance_prob = n, shape, seed, augment, enhance_prob
         self._enh = None
+        self.return_label = return_label      # label -1 = "no class" (ignored by the classification loss)
 
     def __len__(self):
         return self.n
@@ -36,7 +37,8 @@ class SyntheticLesions(Dataset):
         img = normalize_bmode(img)
         if self.augment and rng.random() < 0.5:
             img, mask = img[:, ::-1].copy(), mask[:, ::-1].copy()
-        return torch.from_numpy(img)[None], torch.from_numpy(mask.astype(np.float32))[None]
+        out = (torch.from_numpy(img)[None], torch.from_numpy(mask.astype(np.float32))[None])
+        return out + (torch.tensor(-1),) if self.return_label else out
 
 
 class BUSI(Dataset):
@@ -51,9 +53,13 @@ class BUSI(Dataset):
     whole image - the pipeline's frame size), mild gamma/brightness jitter.
     """
 
-    def __init__(self, root, shape=(256, 256), classes=("benign", "malignant", "normal"),
-                 augment=False, crop_w=128, indices=None):
+    CLASSES = ("benign", "malignant", "normal")
+
+    def __init__(self, root, shape=(256, 256), classes=CLASSES,
+                 augment=False, crop_w=128, indices=None, return_label=False, crop_prob=0.7):
         self.shape, self.augment, self.crop_w = shape, augment, crop_w
+        self.return_label, self.crop_prob = return_label, crop_prob
+        self.classes = tuple(classes)
         items = []
         for cls in classes:
             for p in sorted((Path(root) / cls).glob("*.png")):
@@ -82,7 +88,7 @@ class BUSI(Dataset):
             if rng.random() < 0.5:
                 img, m = img[:, ::-1], m[:, ::-1]
             if self.crop_w and w > self.crop_w:               # always output (h, crop_w) so batches collate
-                if rng.random() < 0.7:
+                if rng.random() < self.crop_prob:
                     x0 = int(rng.integers(0, w - self.crop_w + 1))
                     img, m = img[:, x0:x0 + self.crop_w], m[:, x0:x0 + self.crop_w]
                 else:                                           # whole image squeezed to the pipeline aspect
@@ -90,4 +96,8 @@ class BUSI(Dataset):
                     m = (cv2.resize(np.ascontiguousarray(m), (self.crop_w, h), interpolation=cv2.INTER_AREA) > 0.5).astype(np.float32)
             img = np.clip(img ** rng.uniform(0.8, 1.25) + rng.uniform(-0.08, 0.08), 0, 1)
         img = normalize_bmode(np.ascontiguousarray(img, dtype=np.float32))   # same per-frame normalisation as inference
-        return torch.from_numpy(img)[None], torch.from_numpy(np.ascontiguousarray(m))[None]
+        out = (torch.from_numpy(img)[None], torch.from_numpy(np.ascontiguousarray(m))[None])
+        return out + (torch.tensor(self.classes.index(cls)),) if self.return_label else out
+
+    def labels(self):
+        return [self.classes.index(c) for _, _, c in self.items]
