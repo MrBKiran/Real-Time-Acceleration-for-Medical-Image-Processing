@@ -1,0 +1,13 @@
+transformer params: 189,409  device=cpu  amp=False  classes=off  train batches/epoch=93  val={'synthetic': 187}
+batch check: x (16, 1, 256, 128) [0.068, 1.000] mean 0.689 finite=True | y (16, 1, 256, 128) lesion-pixel fraction 0.047 finite=True
+epoch 1/10 loss 1.3574 synthetic dice 0.647 (50s)  *saved (best)
+epoch 2/10 loss 1.0574 synthetic dice 0.454 (85s)
+epoch 3/10 loss 0.6060 synthetic dice 0.610 (47s)
+epoch 4/10 loss 0.4357 synthetic dice 0.892 (54s)  *saved (best)
+epoch 5/10 loss 0.4054 synthetic dice 0.897 (46s)  *saved (best)
+epoch 6/10 loss 0.3926 synthetic dice 0.876 (46s)
+epoch 7/10 loss 0.3784 synthetic dice 0.894 (45s)
+epoch 8/10 loss 0.3690 synthetic dice 0.965 (49s)  *saved (best)
+epoch 9/10 loss 0.2970 synthetic dice 0.968 (55s)  *saved (best)
+epoch 10/10 loss 0.2198 synthetic dice 0.968 (50s)  *saved (best)
+done. best epoch 10: synthetic dice 0.968 [selected on dice 0.968] -> models/tinysegformer.pt
