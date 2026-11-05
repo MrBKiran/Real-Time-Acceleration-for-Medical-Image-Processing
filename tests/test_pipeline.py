@@ -53,3 +53,13 @@ def test_unet_shapes_and_size():
     for hw in ((256, 128), (100, 77)):
         assert m(torch.rand(1, 1, *hw)).shape == (1, 1, *hw)
     assert n_params(m) < 300_000
+
+
+def test_transformer_segmenter_shapes_and_guard():
+    import pytest
+    from src.ai.model import build_model
+    m = build_model("transformer").eval()
+    for hw in ((256, 128), (256, 256), (100, 77)):
+        assert m(torch.rand(1, 1, *hw)).shape == (1, 1, *hw)
+    with pytest.raises(ValueError):
+        build_model("transformer", n_classes=3)

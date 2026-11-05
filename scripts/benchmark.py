@@ -12,7 +12,7 @@ import numpy as np
 import torch
 
 from scripts.common import grid, simulate_sequence
-from src.ai.model import TinyUNet, n_params
+from src.ai.model import ARCHS, build_model, n_params
 from src.beamforming.compound import coherent_compound
 from src.beamforming.geometry import element_positions
 from src.beamforming.torch_das import TorchDAS, get_device
@@ -76,18 +76,21 @@ enh["chain_median_bilateral"] = bench(lambda: F.Enhancer()(img_t))
 enh["chain_median_bilateral_clahe"] = bench(lambda: F.Enhancer(["median", "bilateral", "clahe"])(img_t))
 res["enhancement"] = enh
 
-# --- inference ---
-m = TinyUNet().to(dev).eval()
+# --- inference (every architecture) ---
+inf = {}
 x = torch.rand(1, 1, 256, 128, device=dev)
-with torch.no_grad():
-    inf = {"params": n_params(m), "batch1": bench(lambda: m(x))}
-    xb = torch.rand(8, 1, 256, 128, device=dev)
-    r8 = bench(lambda: m(xb))
-    inf["batch8"] = r8
-    inf["throughput_fps_batch8"] = 8 / (r8["mean_ms"] / 1e3)
-    if dev.type == "cuda":
-        mh = TinyUNet().to(dev).eval().half()
-        inf["batch1_fp16"] = bench(lambda: mh(x.half()))
+xb = torch.rand(8, 1, 256, 128, device=dev)
+for arch in ARCHS:
+    m = build_model(arch).to(dev).eval()
+    with torch.no_grad():
+        r = {"params": n_params(m), "batch1": bench(lambda: m(x))}
+        r8 = bench(lambda: m(xb))
+        r["batch8"] = r8
+        r["throughput_fps_batch8"] = 8 / (r8["mean_ms"] / 1e3)
+        if dev.type == "cuda":
+            mh = build_model(arch).to(dev).eval().half()
+            r["batch1_fp16"] = bench(lambda: mh(x.half()))
+    inf[arch] = r
 res["inference"] = inf
 Path(a.out).parent.mkdir(parents=True, exist_ok=True)
 Path(a.out).write_text(json.dumps(res, indent=1))

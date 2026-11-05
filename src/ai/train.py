@@ -28,7 +28,7 @@ import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 
 from src.ai.data import BUSI, SyntheticLesions
-from src.ai.model import TinyUNet, n_params
+from src.ai.model import ARCHS, build_model, n_params
 
 
 def soft_dice_loss(logits, target, eps=1.0):
@@ -98,6 +98,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", choices=["synthetic", "busi", "all"], default="synthetic")
     ap.add_argument("--busi-root", default="Dataset_BUSI_with_GT")
+    ap.add_argument("--arch", choices=list(ARCHS), default="unet", help="segmentation network")
     ap.add_argument("--classify", action="store_true",
                     help="also train a benign/malignant/normal head (needs BUSI)")
     ap.add_argument("--cls-weight", type=float, default=0.5, help="weight of the classification loss")
@@ -118,6 +119,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.classify and a.data == "synthetic":
         ap.error("--classify needs BUSI class labels: use --data busi or --data all")
+    if a.classify and a.arch != "unet":
+        ap.error("--classify is implemented for --arch unet only")
 
     torch.manual_seed(a.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -154,7 +157,7 @@ def main(argv=None):
     tl = DataLoader(train_ds, a.batch, shuffle=sampler is None, sampler=sampler, drop_last=True, **kw)
     vls = {k: DataLoader(v, 16, num_workers=0) for k, v in vals.items()}   # small; avoids extra worker processes
 
-    model = TinyUNet(n_classes=n_classes).to(device)
+    model = build_model(a.arch, n_classes).to(device)
     if a.init:
         st = torch.load(a.init, map_location=device, weights_only=False)
         missing, unexpected = model.load_state_dict(st["state"] if "state" in st else st, strict=False)
@@ -166,7 +169,7 @@ def main(argv=None):
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, a.lr, total_steps=a.epochs * len(tl))
     scaler = torch.amp.GradScaler(enabled=amp)
     sizes = {k: len(v) for k, v in vals.items()}
-    print(f"TinyUNet params: {n_params(model):,}  device={device}  amp={amp}  classes={n_classes or 'off'}  "
+    print(f"{a.arch} params: {n_params(model):,}  device={device}  amp={amp}  classes={n_classes or 'off'}  "
           f"train batches/epoch={len(tl)}  val={sizes}")
 
     # data sanity check: catches NaN/inf or wrong-range inputs before they poison the weights
@@ -237,7 +240,7 @@ def main(argv=None):
         flag = ""
         if score(rec) > best:
             best = score(rec)
-            torch.save({"state": model.state_dict(), "data": a.data, "history": hist, "best_epoch": ep + 1,
+            torch.save({"state": model.state_dict(), "arch": a.arch, "data": a.data, "history": hist, "best_epoch": ep + 1,
                         "n_classes": n_classes, "classes": list(BUSI.CLASSES) if n_classes else []}, out)
             flag = "  *saved (best)"
         print(f"epoch {ep+1}/{a.epochs} loss {rec['loss']:.4f} {msg} ({time.time()-t0:.0f}s){flag}")

@@ -31,3 +31,4 @@ Dataset_BUSI_with_GT/
 # Generated data (re-create with scripts/simulate_dataset.py)
 data/
 !models/tinyunet.pt
+docs/results/local_run/*.log

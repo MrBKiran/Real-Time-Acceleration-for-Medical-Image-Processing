@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from src.ai.model import TinyUNet
+from src.ai.model import build_model
 from src.ai.normalize import normalize_bmode
 
 
@@ -14,7 +14,8 @@ class LesionDetector:
         state = torch.load(ckpt, map_location=self.device, weights_only=False)
         n_classes = state.get("n_classes", 0) if isinstance(state, dict) else 0
         self.classes = list(state.get("classes", [])) if n_classes else []
-        self.model = TinyUNet(n_classes=n_classes).to(self.device).eval()
+        self.arch = state.get("arch", "unet") if isinstance(state, dict) else "unet"
+        self.model = build_model(self.arch, n_classes).to(self.device).eval()
         self.model.load_state_dict(state["state"] if "state" in state else state)
         self.half = half and self.device.type == "cuda"
         if self.half:

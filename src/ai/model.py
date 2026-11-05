@@ -68,3 +68,68 @@ class TinyUNet(nn.Module):
 
 def n_params(m):
     return sum(p.numel() for p in m.parameters())
+
+
+class _PosConv(nn.Module):
+    """Conditional positional encoding (depthwise 3x3 conv on the token grid) - works at any input size."""
+
+    def __init__(self, dim):
+        super().__init__()
+        self.dw = nn.Conv2d(dim, dim, 3, padding=1, groups=dim)
+
+    def forward(self, t, hw):
+        n, L, c = t.shape
+        g = t.transpose(1, 2).reshape(n, c, *hw)
+        return t + self.dw(g).flatten(2).transpose(1, 2)
+
+
+class TinySegFormer(nn.Module):
+    """Small transformer segmenter for the CNN-vs-transformer comparison.
+
+    Conv stem to 1/4 resolution (skip), patch embedding to 1/8 (256x128 input ->
+    32x16 = 512 tokens), ``depth`` pre-norm transformer blocks with conditional
+    positional encoding, light conv decoder with one skip.  Segmentation only.
+    """
+
+    def __init__(self, dim=64, depth=4, heads=4, n_classes=0):
+        super().__init__()
+        if n_classes:
+            raise ValueError("TinySegFormer supports segmentation only (use TinyUNet for --classify)")
+        self.n_classes = 0
+        cbr = lambda i, o, s: nn.Sequential(nn.Conv2d(i, o, 3, s, 1, bias=False), nn.BatchNorm2d(o), nn.ReLU(inplace=True))
+        self.stem = nn.Sequential(cbr(1, 16, 2), cbr(16, 32, 2))                 # 1/4
+        self.embed = nn.Conv2d(32, dim, 2, 2)                                    # 1/8 tokens
+        self.pos = _PosConv(dim)
+        self.blocks = nn.ModuleList(nn.TransformerEncoderLayer(dim, heads, 2 * dim, dropout=0.0, batch_first=True,
+                                                               norm_first=True, activation="gelu") for _ in range(depth))
+        self.norm = nn.LayerNorm(dim)
+        self.up1 = cbr(dim, 32, 1)
+        self.fuse = cbr(64, 32, 1)
+        self.head = nn.Sequential(cbr(32, 16, 1), nn.Conv2d(16, 1, 1))
+
+    def forward(self, x):
+        H, W = x.shape[-2:]
+        ph, pw = (-H) % 8, (-W) % 8
+        x = F.pad(x, (0, pw, 0, ph), mode="reflect")
+        s4 = self.stem(x)
+        g = self.embed(s4)
+        n, c, h, w = g.shape
+        t = g.flatten(2).transpose(1, 2)
+        for i, blk in enumerate(self.blocks):
+            t = blk(t)
+            if i == 0:
+                t = self.pos(t, (h, w))
+        g = self.norm(t).transpose(1, 2).reshape(n, c, h, w)
+        y = F.interpolate(self.up1(g), size=s4.shape[-2:], mode="bilinear", align_corners=False)
+        y = self.fuse(torch.cat([y, s4], 1))
+        y = F.interpolate(self.head(y), size=x.shape[-2:], mode="bilinear", align_corners=False)
+        return y[..., :H, :W]
+
+
+ARCHS = {"unet": TinyUNet, "transformer": TinySegFormer}
+
+
+def build_model(arch="unet", n_classes=0):
+    if arch not in ARCHS:
+        raise ValueError(f"unknown arch {arch!r}; choose from {list(ARCHS)}")
+    return ARCHS[arch](n_classes=n_classes)
